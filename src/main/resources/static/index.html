@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>현대 PLEOS IVI 시뮬레이터</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=geometry"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+            overflow: hidden;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 15px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .panel-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #00d4ff;
+            text-align: center;
+        }
+
+        .vehicle-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .info-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: #ccc;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+
+        .speed-display {
+            text-align: center;
+            font-size: 48px;
+            font-weight: bold;
+            color: #00ff88;
+            margin: 20px 0;
+        }
+
+        .map-container {
+            height: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .media-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .media-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .media-controls-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn {
+            background: #00d4ff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #0099cc;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #ff4444;
+        }
+
+        .btn-danger:hover {
+            background: #cc0000;
+        }
+
+        .climate-controls {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .climate-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+
+        .warnings {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff4444;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .warning-item {
+            color: #ff4444;
+            margin: 5px 0;
+        }
+
+        .navigation-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00d4ff);
+            transition: width 0.3s;
+        }
+
+        .simulation-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .status-running {
+            background: #00ff88;
+            animation: pulse 1s infinite;
+        }
+
+        .status-stopped {
+            background: #ff4444;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="simulation-controls">
+        <button class="btn" onclick="startSimulation()">
+            <span class="status-indicator status-stopped" id="statusIndicator"></span>
+            시뮬레이션 시작
+        </button>
+    </div>
+
+    <div class="dashboard">
+        <!-- 차량 정보 패널 -->
+        <div class="panel">
+            <div class="panel-header">🚗 차량 정보</div>
+            <div class="speed-display" id="speedDisplay">0 km/h</div>
+            <div class="vehicle-info">
+                <div class="info-item">
+                    <div class="info-label">RPM</div>
+                    <div class="info-value" id="rpmDisplay">0</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">연료</div>
+                    <div class="info-value" id="fuelDisplay">100%</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">엔진 온도</div>
+                    <div class="info-value" id="engineTempDisplay">90°C</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">배터리</div>
+                    <div class="info-value" id="batteryDisplay">12.6V</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">주행 거리</div>
+                    <div class="info-value" id="tripDistanceDisplay">0.0 km</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">평균 속도</div>
+                    <div class="info-value" id="avgSpeedDisplay">0.0 km/h</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 지도 패널 -->
+        <div class="panel">
+            <div class="panel-header">🗺️ 내비게이션</div>
+            <div class="map-container" id="map"></div>
+            <div class="navigation-info" id="navigationInfo">
+                <div>목적지: 강남역</div>
+                <div>예상 시간: --분</div>
+                <div>남은 거리: --km</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="routeProgress" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 미디어 패널 -->
+        <div class="panel">
+            <div class="panel-header">🎵 미디어</div>
+            <div class="media-controls">
+                <div class="media-info" id="mediaInfo">
+                    <div>재생 중: Shape of You</div>
+                    <div>아티스트: Ed Sheeran</div>
+                    <div>앨범: ÷ (Divide)</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="mediaProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="media-controls-buttons">
+                    <button class="btn" onclick="toggleMedia()">재생/일시정지</button>
+                    <button class="btn" onclick="setVolume(50)">음량 50%</button>
+                    <button class="btn" onclick="setVolume(80)">음량 80%</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 공조 시스템 패널 -->
+        <div class="panel">
+            <div class="panel-header">❄️ 공조 시스템</div>
+            <div class="climate-controls">
+                <div class="climate-item">
+                    <div>온도</div>
+                    <input type="range" min="16" max="30" value="22" class="slider" id="temperatureSlider" onchange="setTemperature(this.value)">
+                    <div id="temperatureDisplay">22°C</div>
+                </div>
+                <div class="climate-item">
+                    <div>팬 속도</div>
+                    <input type="range" min="1" max="5" value="2" class="slider" id="fanSlider" onchange="setFanSpeed(this.value)">
+                    <div id="fanDisplay">2단계</div>
+                </div>
+                <div class="climate-item">
+                    <div>모드</div>
+                    <button class="btn" onclick="toggleClimateMode()" id="climateModeBtn">Auto</button>
+                </div>
+                <div class="climate-item">
+                    <div>상태</div>
+                    <div id="climateStatusDisplay">꺼짐</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let map = null;
+        let vehicleMarker = null;
+        let isSimulationRunning = false;
+
+        // WebSocket 연결
+        function connectWebSocket() {
+            const socket = new SockJS('/ws');
+            stompClient = Stomp.over(socket);
+            stompClient.connect({}, function (frame) {
+                console.log('Connected: ' + frame);
+                stompClient.subscribe('/topic/vehicle-status', function (message) {
+                    updateDashboard(JSON.parse(message.body));
+                });
+            });
+        }
+
+        // 대시보드 업데이트
+        function updateDashboard(data) {
+            // 차량 정보 업데이트
+            document.getElementById('speedDisplay').textContent = Math.round(data.vehicleData.speed) + ' km/h';
+            document.getElementById('rpmDisplay').textContent = data.vehicleData.rpm;
+            document.getElementById('fuelDisplay').textContent = Math.round(data.vehicleData.fuelLevel) + '%';
+            document.getElementById('engineTempDisplay').textContent = Math.round(data.vehicleData.engineTemperature) + '°C';
+            document.getElementById('batteryDisplay').textContent = data.vehicleData.batteryVoltage.toFixed(1) + 'V';
+            document.getElementById('tripDistanceDisplay').textContent = data.vehicleData.tripDistance.toFixed(1) + ' km';
+            document.getElementById('avgSpeedDisplay').textContent = data.vehicleData.averageSpeed.toFixed(1) + ' km/h';
+
+            // 지도 업데이트
+            updateMap(data.vehicleData.location);
+
+            // 내비게이션 정보 업데이트
+            updateNavigation(data.navigationInfo);
+
+            // 미디어 정보 업데이트
+            updateMedia(data.mediaInfo);
+
+            // 공조 시스템 업데이트
+            updateClimate(data.climateControl);
+
+            // 경고 메시지 업데이트
+            updateWarnings(data.warnings);
+        }
+
+        // 지도 업데이트
+        function updateMap(location) {
+            if (!map) return;
+
+            const position = { lat: location.latitude, lng: location.longitude };
+            
+            if (!vehicleMarker) {
+                vehicleMarker = new google.maps.Marker({
+                    position: position,
+                    map: map,
+                    title: '현재 위치',
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 8,
+                        fillColor: '#00ff88',
+                        fillOpacity: 1,
+                        strokeColor: '#ffffff',
+                        strokeWeight: 2
+                    }
+                });
+            } else {
+                vehicleMarker.setPosition(position);
+            }
+
+            map.setCenter(position);
+        }
+
+        // 내비게이션 업데이트
+        function updateNavigation(navInfo) {
+            const navElement = document.getElementById('navigationInfo');
+            navElement.innerHTML = `
+                <div>목적지: ${navInfo.destination}</div>
+                <div>예상 시간: ${navInfo.estimatedTime}분</div>
+                <div>남은 거리: ${navInfo.remainingDistance.toFixed(1)}km</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="routeProgress" style="width: ${Math.min(100, (1 - navInfo.remainingDistance / 10) * 100)}%"></div>
+                </div>
+            `;
+        }
+
+        // 미디어 업데이트
+        function updateMedia(mediaInfo) {
+            const mediaElement = document.getElementById('mediaInfo');
+            const progress = (mediaInfo.currentTime / mediaInfo.duration) * 100;
+            
+            mediaElement.innerHTML = `
+                <div>재생 중: ${mediaInfo.currentTrack}</div>
+                <div>아티스트: ${mediaInfo.artist}</div>
+                <div>앨범: ${mediaInfo.album}</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="mediaProgress" style="width: ${progress}%"></div>
+                </div>
+            `;
+        }
+
+        // 공조 시스템 업데이트
+        function updateClimate(climateControl) {
+            document.getElementById('temperatureDisplay').textContent = Math.round(climateControl.temperature) + '°C';
+            document.getElementById('fanDisplay').textContent = climateControl.fanSpeed + '단계';
+            document.getElementById('climateModeBtn').textContent = climateControl.mode;
+            document.getElementById('climateStatusDisplay').textContent = climateControl.isEnabled ? '켜짐' : '꺼짐';
+            
+            // 슬라이더 값 동기화
+            document.getElementById('temperatureSlider').value = climateControl.temperature;
+            document.getElementById('fanSlider').value = climateControl.fanSpeed;
+        }
+
+        // 경고 메시지 업데이트
+        function updateWarnings(warnings) {
+            const warningsContainer = document.querySelector('.warnings');
+            if (warnings.length > 0) {
+                warningsContainer.innerHTML = warnings.map(warning => 
+                    `<div class="warning-item">⚠️ ${warning}</div>`
+                ).join('');
+                warningsContainer.style.display = 'block';
+            } else {
+                warningsContainer.style.display = 'none';
+            }
+        }
+
+        // 시뮬레이션 제어
+        function startSimulation() {
+            fetch('/api/vehicle/simulation/start', { method: 'POST' })
+                .then(response => response.text())
+                .then(result => {
+                    console.log('Simulation started:', result);
+                    isSimulationRunning = true;
+                    updateSimulationButton();
+                });
+        }
+
+        function stopSimulation() {
+            fetch('/api/vehicle/simulation/stop', { method: 'POST' })
+                .then(response => response.text())
+                .then(result => {
+                    console.log('Simulation stopped:', result);
+                    isSimulationRunning = false;
+                    updateSimulationButton();
+                });
+        }
+
+        function updateSimulationButton() {
+            const button = document.querySelector('.simulation-controls .btn');
+            const indicator = document.getElementById('statusIndicator');
+            
+            if (isSimulationRunning) {
+                button.textContent = '시뮬레이션 중지';
+                button.onclick = stopSimulation;
+                indicator.className = 'status-indicator status-running';
+            } else {
+                button.innerHTML = '<span class="status-indicator status-stopped" id="statusIndicator"></span>시뮬레이션 시작';
+                button.onclick = startSimulation;
+                indicator.className = 'status-indicator status-stopped';
+            }
+        }
+
+        // 미디어 제어
+        function toggleMedia() {
+            fetch('/api/vehicle/media/toggle', { method: 'POST' });
+        }
+
+        function setVolume(volume) {
+            fetch(`/api/vehicle/media/volume?volume=${volume}`, { method: 'POST' });
+        }
+
+        // 공조 시스템 제어
+        function setTemperature(temperature) {
+            fetch(`/api/vehicle/climate/temperature?temperature=${temperature}`, { method: 'POST' });
+        }
+
+        function setFanSpeed(fanSpeed) {
+            fetch(`/api/vehicle/climate/fan?fanSpeed=${fanSpeed}`, { method: 'POST' });
+        }
+
+        function toggleClimateMode() {
+            fetch('/api/vehicle/climate/mode', { method: 'POST' });
+        }
+
+        // 지도 초기화
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 37.5665, lng: 126.9780 },
+                zoom: 15,
+                styles: [
+                    { featureType: 'all', elementType: 'all', stylers: [{ invert_lightness: true }] },
+                    { featureType: 'all', elementType: 'geometry.fill', stylers: [{ color: '#242f3e' }] },
+                    { featureType: 'all', elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
+                    { featureType: 'all', elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
+                    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+                    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+                    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#263c3f' }] },
+                    { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#6b9a76' }] },
+                    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#38414e' }] },
+                    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#212a37' }] },
+                    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#9ca5b3' }] },
+                    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#746855' }] },
+                    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f2835' }] },
+                    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#f3d19c' }] },
+                    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2f3948' }] },
+                    { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#d59563' }] },
+                    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#17263c' }] },
+                    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#515c6d' }] },
+                    { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#17263c' }] }
+                ]
+            });
+        }
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            connectWebSocket();
+            initMap();
+            updateSimulationButton();
+        };
+    </script>
+</body>
+</html> 
